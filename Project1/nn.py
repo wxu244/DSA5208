@@ -2,13 +2,13 @@ import numpy as np
 
 
 class NN:
-    def __init__(self, input_dim, hidden_dim, activation='relu', seed=42):
+    def __init__(self, input_dim, hidden_dim, activation='leaky_relu', seed=42):
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.activation_name = activation.lower()
-        if self.activation_name not in ('relu', 'tanh', 'sigmoid'):
-            print("Unsupported activation: choose 'relu', 'tanh' or 'sigmoid'")
-            raise ValueError("Unsupported activation: choose 'relu', 'tanh' or 'sigmoid'")
+        if self.activation_name not in ('leaky_relu', 'relu', 'tanh', 'sigmoid'):
+            print("Unsupported activation: choose 'leaky_relu', 'relu', 'tanh' or 'sigmoid'")
+            raise ValueError("Unsupported activation: choose 'leaky_relu', 'relu', 'tanh' or 'sigmoid'")
         rng = np.random.RandomState(seed)
         limit1 = np.sqrt(6.0 / (input_dim + hidden_dim))
         self.W1 = rng.uniform(-limit1, limit1, size=(input_dim, hidden_dim)).astype(np.float64)
@@ -18,7 +18,9 @@ class NN:
         self.b2 = np.zeros((1,), dtype=np.float64)
 
     def activation(self, z):
-        if self.activation_name == 'relu':
+        if self.activation_name == 'leaky_relu':
+            return np.where(z > 0, z, 0.01 * z)
+        elif self.activation_name == 'relu':
             return np.maximum(0, z)
         elif self.activation_name == 'tanh':
             return np.tanh(z)
@@ -27,7 +29,9 @@ class NN:
         return None
 
     def activation_derivative(self, z, a=None):
-        if self.activation_name == 'relu':
+        if self.activation_name == 'leaky_relu':
+            return np.where(z > 0, 1.0, 0.01)
+        elif self.activation_name == 'relu':
             dz = (z > 0).astype(np.float64)
             return dz
         elif self.activation_name == 'tanh':

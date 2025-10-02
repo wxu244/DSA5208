@@ -1,5 +1,7 @@
 import argparse
 import time
+import json
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -12,7 +14,7 @@ from nn import NN
 
 def split_file(comm, rank, size):
     try:
-        fp = MPI.File.Open(comm, 'nytaxi2022.csv', MPI.MODE_RDONLY)
+        fp = MPI.File.Open(comm, r'D:\NUS\DSML\DSA5208\Project1\DSA5208\Project1\nytaxi2022.csv\nytaxi2022.csv', MPI.MODE_RDONLY)
     except MPI.Exception as e:
         if rank == 0:
             print(f"Error opening file: {e}")
@@ -154,8 +156,8 @@ def vector_to_grads(vec, shapes):
     return grads
 
 
-def train_model(comm, model, X_train_local, y_train_local, batch_size_global=128, lr=1e-3,
-                epochs=50, tol=1e-6, patience=5, seed=20):
+def train_model(comm, model, X_train_local, y_train_local, X_test_local, y_test_local,
+                batch_size_global=128, lr=1e-3, epochs=50, tol=1e-6, patience=5, seed=20):
     rank = comm.Get_rank()
     size = comm.Get_size()
     rng = np.random.RandomState(seed + rank * 997)
@@ -171,6 +173,9 @@ def train_model(comm, model, X_train_local, y_train_local, batch_size_global=128
 
     prev_loss = None
     no_improve = 0
+
+    train_losses = []
+    test_losses = []
 
     t0 = time.time() if rank == 0 else None
 
@@ -204,9 +209,21 @@ def train_model(comm, model, X_train_local, y_train_local, batch_size_global=128
         sse_global = comm.allreduce(np.float64(sse_local), op=MPI.SUM)
         global_loss = 0.5 * sse_global / float(total_train)
 
+        # Compute test loss (same definition as training loss: 0.5 * MSE)
+        n_test_local = X_test_local.shape[0]
+        y_pred_test_local, _ = model.forward_pass(X_test_local)
+        diff_test_local = y_pred_test_local - y_test_local
+        sse_test_local = np.sum(diff_test_local ** 2)
+        sse_test_global = comm.allreduce(np.float64(sse_test_local), op=MPI.SUM)
+        total_test = comm.allreduce(np.int64(n_test_local), op=MPI.SUM)
+        global_test_loss = 0.5 * sse_test_global / float(total_test)
+
+        train_losses.append(float(global_loss))
+        test_losses.append(float(global_test_loss))
+
         if rank == 0:
             print(
-                f"Epoch {ep + 1}/{epochs} - global loss R = {global_loss:.6f} - M_global = {M_global} - time {time.time() - t0:.2f}s")
+                f"Epoch {ep + 1}/{epochs} - train loss = {global_loss:.6f} - test loss = {global_test_loss:.6f} - M_global = {M_global} - time {time.time() - t0:.2f}s")
 
         if prev_loss is not None:
             if prev_loss - global_loss <= tol:
@@ -223,7 +240,7 @@ def train_model(comm, model, X_train_local, y_train_local, batch_size_global=128
     if rank == 0:
         total_time = time.time() - t0
 
-    return total_time
+    return total_time, train_losses, test_losses
 
 
 def compute_rmse_distributed(model, X_local, y_local, comm):
@@ -240,7 +257,7 @@ def compute_rmse_distributed(model, X_local, y_local, comm):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--hidden', type=int, default=32, help='number of hidden neurons')
-    parser.add_argument('--activation', type=str, default='sigmoid', choices=['relu', 'tanh', 'sigmoid'],
+    parser.add_argument('--activation', type=str, default='sigmoid', choices=['relu', 'tanh', 'sigmoid','leaky_relu'],
                         help='activation function')
     parser.add_argument('--batch', type=int, default=128, help='global mini-batch size M')
     parser.add_argument('--epochs', type=int, default=100, help='Maximum number of training rounds')
@@ -254,11 +271,13 @@ def main():
     buff = split_file(comm, rank, 1000)
     data, input_dim = load_and_preprocess_data(buff, rank)
     X_train_local, X_test_local, y_train_local, y_test_local = global_fit_and_transform(data, comm, rank)
-    model = NN(X_train_local.shape[1], args.hidden, args.activation, 42)
+    model = NN(X_train_local.shape[1], args.hidden, args.activation, 89)
 
-    train_time = train_model(comm, model, X_train_local, y_train_local,
-                             batch_size_global=args.batch, lr=args.lr, epochs=args.epochs, tol=1e-6,
-                             patience=10, seed=42)
+    train_time, train_losses, test_losses = train_model(
+        comm, model, X_train_local, y_train_local, X_test_local, y_test_local,
+        batch_size_global=args.batch, lr=args.lr, epochs=args.epochs, tol=1e-6,
+        patience=10, seed=100
+    )
 
     train_rmse = compute_rmse_distributed(model, X_train_local, y_train_local, comm)
     test_rmse = compute_rmse_distributed(model, X_test_local, y_test_local, comm)
@@ -268,6 +287,30 @@ def main():
         print(f"training time（rank 0）：{train_time:.2f}s")
         print(f"training RMSE: {train_rmse:.6f}")
         print(f"test RMSE: {test_rmse:.6f}")
+
+        # Append JSONL logging for the run
+        log_record = {
+            "timestamp": datetime.now().isoformat(),
+            "params": {
+                "activation": args.activation,
+                "hidden": args.hidden,
+                "batch_size": args.batch,
+                "epochs": args.epochs,
+                "lr": args.lr
+            },
+            "results": {
+                "final_test_rmse": float(test_rmse),
+                "train_losses": train_losses,
+                "test_losses": test_losses,
+                "train_time_sec": float(train_time) if train_time is not None else None
+            }
+        }
+        try:
+            with open("training_runs.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_record, ensure_ascii=False) + "\n")
+            print("run logged to training_runs.jsonl")
+        except Exception as e:
+            print(f"failed to write log: {e}")
 
 
 if __name__ == "__main__":
