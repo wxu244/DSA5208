@@ -1,9 +1,10 @@
-# 🚀 Overview
+# DSA5208 Project 1: Stochastic Gradient Descent for Neural Networks using MPI
+## 🚀 Overview
 - **nn.py**: Defines a simple feedforward neural network with configurable hidden dimension and activation function (`leaky_relu`, `relu`, `tanh`, `sigmoid`). Includes forward and backward propagation with gradient updates.
 - **sgd.py**: Implements distributed training using MPI on the NYC Taxi dataset. Handles data loading, preprocessing, feature scaling, mini-batch training, and logging of results.
 - **run_experiments.ps1**: PowerShell script for batch-running multiple experiments across different hyperparameters (activation, hidden units, batch size, etc.) using MPI.
 
-# ⚡ Quick Start
+## ⚡ Quick Start
 First, update the CSV file path in `sgd.py` to match your local dataset location.
 ### 🔹 Run a single experiment
 ```console
